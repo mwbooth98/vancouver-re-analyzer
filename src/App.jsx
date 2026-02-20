@@ -111,6 +111,24 @@ const STORAGE_KEY_MODE   = "re_mode_v1"; // "owner" | "public"
 // ─── Sub-components ─────────────────────────────────────────────────────────
 
 function InputField({ label, value, onChange, prefix, suffix, type = "number", placeholder, hint }) {
+  function formatWithCommas(val) {
+    const digits = val.replace(/[^0-9.]/g, "");
+    const parts = digits.split(".");
+    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    return parts.slice(0, 2).join(".");
+  }
+
+  function handleChange(raw) {
+    if (type !== "number" || !raw) { onChange(raw); return; }
+    const formatted = formatWithCommas(raw);
+    onChange(formatted);
+  }
+
+  // Strip commas before displaying so the raw value in state stays clean for parsing
+  const displayValue = type === "number" && value
+    ? formatWithCommas(String(value))
+    : value;
+
   return (
     <div className="mb-4">
       <label className="block text-xs font-semibold uppercase tracking-widest text-stone-400 mb-1">
@@ -120,10 +138,10 @@ function InputField({ label, value, onChange, prefix, suffix, type = "number", p
       <div className="relative flex items-center">
         {prefix && <span className="absolute left-3 text-stone-400 text-sm pointer-events-none">{prefix}</span>}
         <input
-          type={type === "url" ? "url" : "text"}
+          type="text"
           inputMode={type === "number" ? "decimal" : undefined}
-          value={value}
-          onChange={e => onChange(e.target.value)}
+          value={displayValue}
+          onChange={e => handleChange(e.target.value)}
           placeholder={placeholder}
           className={`w-full bg-stone-800 border border-stone-700 rounded-lg py-2.5 text-sm text-stone-100 placeholder-stone-600 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition-colors ${prefix ? "pl-7" : "pl-3"} ${suffix ? "pr-10" : "pr-3"}`}
         />
