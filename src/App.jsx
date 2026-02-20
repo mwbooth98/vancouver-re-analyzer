@@ -1,29 +1,47 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
+
+// ─── Storage abstraction ─────────────────────────────────────────────────────
+// Uses window.storage (Claude artifact) when available, falls back to
+// localStorage (GitHub Pages / any regular browser environment).
+
+const storage = {
+  async get(key) {
+    try {
+      if (window.storage) {
+        const r = await window.storage.get(key);
+        return r ? r.value : null;
+      }
+    } catch (_) {}
+    try { return localStorage.getItem(key); } catch (_) { return null; }
+  },
+  async set(key, value) {
+    try {
+      if (window.storage) { await window.storage.set(key, value); return; }
+    } catch (_) {}
+    try { localStorage.setItem(key, value); } catch (_) {}
+  },
+  async delete(key) {
+    try {
+      if (window.storage) { await window.storage.delete(key); return; }
+    } catch (_) {}
+    try { localStorage.removeItem(key); } catch (_) {}
+  },
+};
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 function calcPTT(price) {
-  let tax = 0;
-  if (price <= 200000) {
-    tax = price * 0.01;
-  } else if (price <= 2000000) {
-    tax = 200000 * 0.01 + (price - 200000) * 0.02;
-  } else if (price <= 3000000) {
-    tax = 200000 * 0.01 + 1800000 * 0.02 + (price - 2000000) * 0.03;
-  } else {
-    tax = 200000 * 0.01 + 1800000 * 0.02 + 1000000 * 0.03 + (price - 3000000) * 0.05;
-  }
-  return tax;
+  if (price <= 200000) return price * 0.01;
+  if (price <= 2000000) return 200000 * 0.01 + (price - 200000) * 0.02;
+  if (price <= 3000000) return 200000 * 0.01 + 1800000 * 0.02 + (price - 2000000) * 0.03;
+  return 200000 * 0.01 + 1800000 * 0.02 + 1000000 * 0.03 + (price - 3000000) * 0.05;
 }
 
 function calcMonthlyMortgage(principal, annualRate, years) {
   if (!principal || !annualRate || !years) return { payment: 0, interest: 0, principal: 0 };
   const r = annualRate / 100 / 12;
   const n = years * 12;
-  if (r === 0) {
-    const payment = principal / n;
-    return { payment, interest: 0, principal: payment };
-  }
+  if (r === 0) { const p = principal / n; return { payment: p, interest: 0, principal: p }; }
   const payment = (principal * r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
   const interest = principal * r;
   return { payment, interest, principal: payment - interest };
@@ -32,15 +50,35 @@ function calcMonthlyMortgage(principal, annualRate, years) {
 function fmt(n, dec = 0) {
   return n.toLocaleString("en-CA", { minimumFractionDigits: dec, maximumFractionDigits: dec });
 }
-function fmtDollar(n, dec = 0) {
-  return "$" + fmt(n, dec);
-}
+function fmtDollar(n, dec = 0) { return "$" + fmt(n, dec); }
 
 const VANCOUVER_BENCHMARKS = {
   condoPricePerSqft: 1050,
   townhomePricePerSqft: 780,
   strataPerSqft: 0.65,
   avgCapRate: 3.0,
+};
+
+// Sample property shown to public visitors so the tool isn't empty
+const SAMPLE_PROPERTY = {
+  id: "sample",
+  name: "📍 Sample — Yaletown 1BR",
+  listingUrl: "",
+  purchasePrice: "749000",
+  downPaymentPct: "20",
+  mortgageRate: "5.25",
+  amortization: "25",
+  strataFees: "480",
+  annualPropertyTax: "3200",
+  annualHomeInsurance: "1500",
+  maintenanceReserve: "200",
+  legalFees: "2000",
+  homeInspection: "600",
+  titleInsurance: "300",
+  squareFootage: "620",
+  propertyType: "condo",
+  estimatedRent: "2800",
+  yearBuilt: "2009",
 };
 
 const EMPTY_PROPERTY = {
@@ -62,6 +100,13 @@ const EMPTY_PROPERTY = {
   estimatedRent: "",
   yearBuilt: "",
 };
+
+function newId() { return "prop_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7); }
+
+// Storage keys
+const STORAGE_KEY_PROPS  = "re_properties_v1";
+const STORAGE_KEY_ACTIVE = "re_active_idx_v1";
+const STORAGE_KEY_MODE   = "re_mode_v1"; // "owner" | "public"
 
 // ─── Sub-components ─────────────────────────────────────────────────────────
 
@@ -104,16 +149,12 @@ function SelectField({ label, value, onChange, options }) {
 }
 
 function StatCard({ label, value, sub, accent = false, warn = false, good = false }) {
-  const bg = accent
-    ? "bg-amber-500/10 border-amber-500/30"
-    : warn ? "bg-amber-400/10 border-amber-400/20"
-    : good ? "bg-emerald-500/10 border-emerald-500/25"
-    : "bg-stone-800/60 border-stone-700/50";
-  const textColor = accent ? "text-amber-400" : warn ? "text-amber-300" : good ? "text-emerald-400" : "text-stone-100";
+  const bg = accent ? "bg-amber-500/10 border-amber-500/30" : warn ? "bg-amber-400/10 border-amber-400/20" : good ? "bg-emerald-500/10 border-emerald-500/25" : "bg-stone-800/60 border-stone-700/50";
+  const tc = accent ? "text-amber-400" : warn ? "text-amber-300" : good ? "text-emerald-400" : "text-stone-100";
   return (
     <div className={`rounded-xl p-4 border ${bg}`}>
       <p className="text-xs font-semibold uppercase tracking-widest text-stone-400 mb-1">{label}</p>
-      <p className={`font-bold text-xl ${textColor}`}>{value}</p>
+      <p className={`font-bold text-xl ${tc}`}>{value}</p>
       {sub && <p className="text-xs text-stone-500 mt-0.5">{sub}</p>}
     </div>
   );
@@ -134,27 +175,17 @@ function BarChart({ total, nonRecoverable }) {
   return (
     <div className="mt-2">
       <div className="flex justify-between text-xs text-stone-500 mb-1">
-        <span>Total monthly cost</span>
-        <span>{fmtDollar(total)}</span>
+        <span>Total monthly cost</span><span>{fmtDollar(total)}</span>
       </div>
       <div className="relative h-7 rounded-lg overflow-hidden bg-stone-700/40">
-        <div
-          className="absolute left-0 top-0 h-full bg-red-500/70 rounded-lg transition-all duration-500"
-          style={{ width: `${pct}%` }}
-        />
+        <div className="absolute left-0 top-0 h-full bg-red-500/70 rounded-lg transition-all duration-500" style={{ width: `${pct}%` }} />
         <div className="absolute inset-0 flex items-center px-3">
           <span className="text-xs font-semibold text-white/90 drop-shadow">{pct}% non-recoverable</span>
         </div>
       </div>
       <div className="flex gap-4 mt-2">
-        <div className="flex items-center gap-1.5 text-xs text-stone-400">
-          <div className="w-3 h-3 rounded-sm bg-amber-500/70" />
-          Recoverable (principal)
-        </div>
-        <div className="flex items-center gap-1.5 text-xs text-stone-400">
-          <div className="w-3 h-3 rounded-sm bg-red-500/70" />
-          Non-recoverable
-        </div>
+        <div className="flex items-center gap-1.5 text-xs text-stone-400"><div className="w-3 h-3 rounded-sm bg-amber-500/70" />Recoverable (principal)</div>
+        <div className="flex items-center gap-1.5 text-xs text-stone-400"><div className="w-3 h-3 rounded-sm bg-red-500/70" />Non-recoverable</div>
       </div>
     </div>
   );
@@ -179,22 +210,94 @@ function MetricRow({ label, value, context, status }) {
 // ─── Main Component ──────────────────────────────────────────────────────────
 
 export default function RealEstateDashboard() {
-  const [properties, setProperties] = useState([{ ...EMPTY_PROPERTY, name: "My First Property" }]);
-  const [activeIdx, setActiveIdx] = useState(0);
+  const [mode, setMode]             = useState(null); // null = loading | "owner" | "public"
+  const [properties, setProperties] = useState(null); // null = loading
+  const [activeIdx, setActiveIdx]   = useState(0);
   const [formCollapsed, setFormCollapsed] = useState(false);
   const [sliderDownPct, setSliderDownPct] = useState(null);
+  const [saveStatus, setSaveStatus] = useState("idle"); // "idle" | "saving" | "saved"
+  const saveTimer = useRef(null);
 
-  const prop = properties[activeIdx];
-  const baseDownPct = parseFloat(prop.downPaymentPct) || 20;
-  const effectiveDownPct = sliderDownPct !== null ? sliderDownPct : baseDownPct;
+  // ── Load from storage on mount ───────────────────────────────────────────
+  useEffect(() => {
+    (async () => {
+      try {
+        const [savedMode, savedProps, savedIdx] = await Promise.all([
+          storage.get(STORAGE_KEY_MODE),
+          storage.get(STORAGE_KEY_PROPS),
+          storage.get(STORAGE_KEY_ACTIVE),
+        ]);
 
+        const resolvedMode = savedMode || "public";
+        setMode(resolvedMode);
+
+        if (resolvedMode === "owner" && savedProps) {
+          const parsed = JSON.parse(savedProps);
+          setProperties(parsed.length > 0 ? parsed : [{ ...EMPTY_PROPERTY, id: newId(), name: "My First Property" }]);
+          setActiveIdx(savedIdx ? parseInt(savedIdx) : 0);
+        } else {
+          // Public mode: always start fresh with sample property
+          setProperties([{ ...SAMPLE_PROPERTY }]);
+          setActiveIdx(0);
+        }
+      } catch (_) {
+        setMode("public");
+        setProperties([{ ...SAMPLE_PROPERTY }]);
+      }
+    })();
+  }, []);
+
+  // ── Auto-save owner properties ────────────────────────────────────────────
+  useEffect(() => {
+    if (mode !== "owner" || properties === null) return;
+    clearTimeout(saveTimer.current);
+    setSaveStatus("saving");
+    saveTimer.current = setTimeout(async () => {
+      await storage.set(STORAGE_KEY_PROPS, JSON.stringify(properties));
+      await storage.set(STORAGE_KEY_ACTIVE, String(activeIdx));
+      setSaveStatus("saved");
+      setTimeout(() => setSaveStatus("idle"), 2000);
+    }, 800);
+    return () => clearTimeout(saveTimer.current);
+  }, [properties, activeIdx, mode]);
+
+  // ── Switch mode ───────────────────────────────────────────────────────────
+  async function switchToOwner() {
+    await storage.set(STORAGE_KEY_MODE, "owner");
+    setMode("owner");
+    // Load owner's saved properties, or start fresh
+    try {
+      const saved = await storage.get(STORAGE_KEY_PROPS);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        setProperties(parsed.length > 0 ? parsed : [{ ...EMPTY_PROPERTY, id: newId(), name: "My First Property" }]);
+      } else {
+        setProperties([{ ...EMPTY_PROPERTY, id: newId(), name: "My First Property" }]);
+      }
+    } catch (_) {
+      setProperties([{ ...EMPTY_PROPERTY, id: newId(), name: "My First Property" }]);
+    }
+    setActiveIdx(0);
+    setSliderDownPct(null);
+  }
+
+  async function switchToPublic() {
+    await storage.set(STORAGE_KEY_MODE, "public");
+    setMode("public");
+    setProperties([{ ...SAMPLE_PROPERTY }]);
+    setActiveIdx(0);
+    setSliderDownPct(null);
+  }
+
+  // ── Property CRUD ─────────────────────────────────────────────────────────
   function updateProp(field, value) {
-    setProperties(prev => prev.map((p, i) => (i === activeIdx ? { ...p, [field]: value } : p)));
+    setProperties(prev => prev.map((p, i) => i === activeIdx ? { ...p, [field]: value } : p));
     if (field === "downPaymentPct") setSliderDownPct(null);
   }
 
   function addProperty() {
-    setProperties(prev => [...prev, { ...EMPTY_PROPERTY, name: `Property ${prev.length + 1}` }]);
+    const np = { ...EMPTY_PROPERTY, id: newId(), name: `Property ${properties.length + 1}` };
+    setProperties(prev => [...prev, np]);
     setActiveIdx(properties.length);
     setSliderDownPct(null);
   }
@@ -202,7 +305,7 @@ export default function RealEstateDashboard() {
   function removeProperty(idx) {
     if (properties.length === 1) return;
     setProperties(prev => prev.filter((_, i) => i !== idx));
-    setActiveIdx(prev => (prev >= idx && prev > 0 ? prev - 1 : prev));
+    setActiveIdx(prev => Math.max(0, prev >= idx ? prev - 1 : prev));
     setSliderDownPct(null);
   }
 
@@ -211,46 +314,59 @@ export default function RealEstateDashboard() {
     setSliderDownPct(null);
   }
 
-  const calcs = useMemo(() => {
-    const price = parseFloat(prop.purchasePrice) || 0;
-    const downPct = effectiveDownPct;
-    const downAmt = price * (downPct / 100);
-    const loanAmt = price - downAmt;
-    const rate = parseFloat(prop.mortgageRate) || 0;
-    const amort = parseInt(prop.amortization) || 25;
-    const sqft = parseFloat(prop.squareFootage) || 0;
+  // ── Loading state ─────────────────────────────────────────────────────────
+  if (mode === null || properties === null) {
+    return (
+      <div className="min-h-screen bg-stone-900 flex items-center justify-center">
+        <div className="text-stone-500 text-sm animate-pulse">Loading…</div>
+      </div>
+    );
+  }
 
-    const ptt = calcPTT(price);
+  const prop = properties[activeIdx] || properties[0];
+  const baseDownPct = parseFloat(prop.downPaymentPct) || 20;
+  const effectiveDownPct = sliderDownPct !== null ? sliderDownPct : baseDownPct;
+
+  // ── Calculations ──────────────────────────────────────────────────────────
+  const calcs = (() => {
+    const price    = parseFloat(prop.purchasePrice) || 0;
+    const downPct  = effectiveDownPct;
+    const downAmt  = price * (downPct / 100);
+    const loanAmt  = price - downAmt;
+    const rate     = parseFloat(prop.mortgageRate) || 0;
+    const amort    = parseInt(prop.amortization) || 25;
+    const sqft     = parseFloat(prop.squareFootage) || 0;
+
+    const ptt      = calcPTT(price);
     const legalFees = parseFloat(prop.legalFees) || 0;
     const inspection = parseFloat(prop.homeInspection) || 0;
-    const titleIns = parseFloat(prop.titleInsurance) || 0;
+    const titleIns  = parseFloat(prop.titleInsurance) || 0;
     const totalUpfront = ptt + legalFees + inspection + titleIns + downAmt;
     const totalUpfrontExcludingDown = ptt + legalFees + inspection + titleIns;
 
     const { payment: mortgagePayment, interest: mortgageInterest, principal: mortgagePrincipal } =
       calcMonthlyMortgage(loanAmt, rate, amort);
 
-    const strataFees = parseFloat(prop.strataFees) || 0;
-    const propTax = (parseFloat(prop.annualPropertyTax) || 0) / 12;
-    const insurance = (parseFloat(prop.annualHomeInsurance) || 0) / 12;
-    const maintenance = parseFloat(prop.maintenanceReserve) || 0;
+    const strataFees   = parseFloat(prop.strataFees) || 0;
+    const propTax      = (parseFloat(prop.annualPropertyTax) || 0) / 12;
+    const insurance    = (parseFloat(prop.annualHomeInsurance) || 0) / 12;
+    const maintenance  = parseFloat(prop.maintenanceReserve) || 0;
 
-    const totalMonthly = mortgagePayment + strataFees + propTax + insurance + maintenance;
+    const totalMonthly        = mortgagePayment + strataFees + propTax + insurance + maintenance;
     const totalNonRecoverable = mortgageInterest + strataFees + propTax + insurance + maintenance;
 
-    // Metrics
-    const pricePerSqft = sqft > 0 ? price / sqft : 0;
+    const pricePerSqft  = sqft > 0 ? price / sqft : 0;
     const strataPerSqft = sqft > 0 && strataFees > 0 ? strataFees / sqft : 0;
     const estimatedRent = parseFloat(prop.estimatedRent) || 0;
     const grossRentMultiplier = estimatedRent > 0 ? price / (estimatedRent * 12) : 0;
     const annualNOI = estimatedRent > 0
       ? (estimatedRent * 12) - (strataFees * 12) - (parseFloat(prop.annualPropertyTax) || 0) - (parseFloat(prop.annualHomeInsurance) || 0) - (maintenance * 12)
       : 0;
-    const capRate = price > 0 && annualNOI > 0 ? (annualNOI / price) * 100 : 0;
+    const capRate      = price > 0 && annualNOI > 0 ? (annualNOI / price) * 100 : 0;
     const rentVsNonRec = estimatedRent > 0 ? totalNonRecoverable - estimatedRent : null;
     const effectiveLTV = price > 0 ? (loanAmt / price) * 100 : 0;
-    const yearBuilt = parseInt(prop.yearBuilt) || 0;
-    const buildingAge = yearBuilt > 0 ? new Date().getFullYear() - yearBuilt : null;
+    const yearBuilt    = parseInt(prop.yearBuilt) || 0;
+    const buildingAge  = yearBuilt > 0 ? new Date().getFullYear() - yearBuilt : null;
     const benchmarkPPSF = prop.propertyType === "condo" ? VANCOUVER_BENCHMARKS.condoPricePerSqft : VANCOUVER_BENCHMARKS.townhomePricePerSqft;
     const priceVsBenchmark = pricePerSqft > 0 ? ((pricePerSqft - benchmarkPPSF) / benchmarkPPSF) * 100 : null;
 
@@ -265,29 +381,66 @@ export default function RealEstateDashboard() {
       estimatedRent, grossRentMultiplier, capRate, rentVsNonRec,
       buildingAge,
     };
-  }, [prop, effectiveDownPct]);
+  })();
 
   const hasMetrics = calcs.sqft > 0 || calcs.estimatedRent > 0;
+  const isOwner    = mode === "owner";
 
   return (
     <div style={{ fontFamily: "'DM Sans', 'Segoe UI', sans-serif" }} className="min-h-screen bg-stone-900 text-stone-100 p-4 md:p-6">
-      {/* Header */}
-      <div className="max-w-6xl mx-auto mb-6">
-        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-2">
+
+      {/* ── Header ── */}
+      <div className="max-w-6xl mx-auto mb-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <p className="text-xs uppercase tracking-widest text-amber-500 font-semibold mb-0.5">Vancouver Real Estate</p>
             <h1 className="text-2xl font-bold text-stone-100">Purchase Analyzer</h1>
           </div>
-          <p className="text-xs text-stone-500">BC Property Transfer Tax · Mortgage · Strata</p>
+
+          {/* Mode toggle + save indicator */}
+          <div className="flex items-center gap-3">
+            {isOwner && saveStatus !== "idle" && (
+              <span className={`text-xs transition-opacity ${saveStatus === "saving" ? "text-stone-500" : "text-emerald-400"}`}>
+                {saveStatus === "saving" ? "Saving…" : "✓ Saved"}
+              </span>
+            )}
+            <div className="flex items-center bg-stone-800 border border-stone-700 rounded-xl p-1 gap-1">
+              <button
+                onClick={switchToOwner}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${isOwner ? "bg-amber-500 text-stone-900 shadow-md" : "text-stone-400 hover:text-stone-200"}`}
+              >
+                🔒 My Properties
+              </button>
+              <button
+                onClick={switchToPublic}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${!isOwner ? "bg-stone-600 text-stone-100 shadow-md" : "text-stone-400 hover:text-stone-200"}`}
+              >
+                🌐 Public View
+              </button>
+            </div>
+          </div>
         </div>
+
+        {/* Mode banner */}
+        {isOwner ? (
+          <div className="mt-3 flex items-center gap-2 text-xs text-emerald-400/80 bg-emerald-500/5 border border-emerald-500/15 rounded-lg px-3 py-2">
+            <span>🔒</span>
+            <span>Owner mode — your properties are automatically saved and will be here when you return.</span>
+          </div>
+        ) : (
+          <div className="mt-3 flex items-center justify-between gap-2 text-xs bg-stone-800/60 border border-stone-700/50 rounded-lg px-3 py-2">
+            <span className="text-stone-400">🌐 Public view — loaded with a sample property. Your changes are yours only and won't affect anyone else.</span>
+            <button onClick={switchToOwner} className="text-amber-500 hover:text-amber-400 font-semibold whitespace-nowrap transition-colors">Switch to owner →</button>
+          </div>
+        )}
       </div>
 
       <div className="max-w-6xl mx-auto">
-        {/* Property Tabs */}
+        {/* ── Property Tabs ── */}
         <div className="flex items-center gap-2 mb-4 flex-wrap">
           {properties.map((p, i) => (
             <button
-              key={i}
+              key={p.id || i}
               onClick={() => switchProperty(i)}
               className={`group flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all border ${
                 i === activeIdx
@@ -300,27 +453,26 @@ export default function RealEstateDashboard() {
                 <span
                   onClick={e => { e.stopPropagation(); removeProperty(i); }}
                   className={`ml-1 text-xs rounded px-0.5 ${i === activeIdx ? "hover:bg-amber-600/50" : "hover:bg-stone-600"}`}
-                >
-                  ×
-                </span>
+                >×</span>
               )}
             </button>
           ))}
-          <button
-            onClick={addProperty}
-            className="px-3 py-1.5 rounded-lg text-sm text-stone-500 border border-dashed border-stone-700 hover:border-amber-500 hover:text-amber-500 transition-all"
-          >
-            + Add Property
-          </button>
+          {(isOwner || properties.length === 1) && (
+            <button
+              onClick={addProperty}
+              className="px-3 py-1.5 rounded-lg text-sm text-stone-500 border border-dashed border-stone-700 hover:border-amber-500 hover:text-amber-500 transition-all"
+            >
+              + Add Property
+            </button>
+          )}
         </div>
 
-        {/* Main Grid */}
+        {/* ── Main Grid ── */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
 
-          {/* ── Left: Collapsible Input Form ─────────────────────────────── */}
+          {/* Left: Collapsible Form */}
           <div className="lg:col-span-1">
             <div className="bg-stone-900/80 border border-stone-700/60 rounded-2xl overflow-hidden">
-              {/* Toggle Header */}
               <button
                 onClick={() => setFormCollapsed(v => !v)}
                 className="w-full flex items-center justify-between px-5 py-4 hover:bg-stone-800/40 transition-colors group"
@@ -332,23 +484,20 @@ export default function RealEstateDashboard() {
                       {prop.name || "Property Details"}
                     </p>
                     {formCollapsed && calcs.price > 0 && (
-                      <p className="text-xs text-stone-500 mt-0.5">
-                        {fmtDollar(calcs.price)} · {calcs.downPct}% dn · {prop.mortgageRate}% · {prop.amortization}yr
-                      </p>
+                      <p className="text-xs text-stone-500 mt-0.5">{fmtDollar(calcs.price)} · {calcs.downPct}% dn · {prop.mortgageRate}% · {prop.amortization}yr</p>
                     )}
                     {formCollapsed && !calcs.price && (
                       <p className="text-xs text-stone-600">Click to enter property details</p>
                     )}
                   </div>
                 </div>
-                <div className={`text-stone-500 group-hover:text-stone-300 transition-all duration-200 ${formCollapsed ? "" : "rotate-180"}`}>
+                <div className={`text-stone-500 group-hover:text-stone-300 transition-transform duration-200 ${formCollapsed ? "" : "rotate-180"}`}>
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                     <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
                 </div>
               </button>
 
-              {/* Form Body */}
               {!formCollapsed && (
                 <div className="px-5 pb-5 border-t border-stone-700/40">
                   <div className="mt-4">
@@ -368,13 +517,7 @@ export default function RealEstateDashboard() {
                     )}
 
                     <div className="h-px bg-stone-700/50 mb-4" />
-
-                    <SelectField
-                      label="Property Type"
-                      value={prop.propertyType}
-                      onChange={v => updateProp("propertyType", v)}
-                      options={[{ value: "condo", label: "Condo / Apartment" }, { value: "townhome", label: "Townhome" }]}
-                    />
+                    <SelectField label="Property Type" value={prop.propertyType} onChange={v => updateProp("propertyType", v)} options={[{ value: "condo", label: "Condo / Apartment" }, { value: "townhome", label: "Townhome" }]} />
                     <InputField label="Purchase Price" prefix="$" value={prop.purchasePrice} onChange={v => updateProp("purchasePrice", v)} placeholder="800,000" />
                     <InputField label="Square Footage" suffix="sqft" value={prop.squareFootage} onChange={v => updateProp("squareFootage", v)} placeholder="650" />
                     <InputField label="Year Built" value={prop.yearBuilt} onChange={v => updateProp("yearBuilt", v)} placeholder="2005" />
@@ -383,7 +526,6 @@ export default function RealEstateDashboard() {
                     <InputField label="Amortization Period" suffix="yrs" value={prop.amortization} onChange={v => updateProp("amortization", v)} placeholder="25" />
 
                     <div className="h-px bg-stone-700/50 mb-4" />
-
                     <InputField label="Monthly Strata Fees" prefix="$" value={prop.strataFees} onChange={v => updateProp("strataFees", v)} placeholder="450" />
                     <InputField label="Annual Property Tax" prefix="$" value={prop.annualPropertyTax} onChange={v => updateProp("annualPropertyTax", v)} placeholder="4,200" />
                     <InputField label="Annual Home Insurance" prefix="$" value={prop.annualHomeInsurance} onChange={v => updateProp("annualHomeInsurance", v)} placeholder="1,500" />
@@ -391,7 +533,6 @@ export default function RealEstateDashboard() {
                     <InputField label="Est. Monthly Rent" prefix="$" value={prop.estimatedRent} onChange={v => updateProp("estimatedRent", v)} placeholder="2,800" hint="for metrics" />
 
                     <div className="h-px bg-stone-700/50 mb-4" />
-
                     <InputField label="Legal Fees (est.)" prefix="$" value={prop.legalFees} onChange={v => updateProp("legalFees", v)} hint="one-time" />
                     <InputField label="Home Inspection (est.)" prefix="$" value={prop.homeInspection} onChange={v => updateProp("homeInspection", v)} hint="one-time" />
                     <InputField label="Title Insurance (est.)" prefix="$" value={prop.titleInsurance} onChange={v => updateProp("titleInsurance", v)} hint="one-time" />
@@ -401,7 +542,7 @@ export default function RealEstateDashboard() {
             </div>
           </div>
 
-          {/* ── Right: Results ────────────────────────────────────────────── */}
+          {/* Right: Results */}
           <div className="lg:col-span-2 flex flex-col gap-4">
 
             {/* Section 1: Upfront Costs */}
@@ -443,7 +584,7 @@ export default function RealEstateDashboard() {
             <div className="bg-stone-900/80 border border-stone-700/60 rounded-2xl p-5">
               <SectionTitle icon="📅">Monthly Cash Flow</SectionTitle>
 
-              {/* ── Down Payment Slider ── */}
+              {/* Down Payment Slider */}
               <div className="mb-5 p-4 rounded-xl bg-stone-800/50 border border-stone-700/50">
                 <div className="flex items-center justify-between mb-3">
                   <p className="text-xs font-semibold uppercase tracking-widest text-stone-400">Down Payment Scenario</p>
@@ -451,51 +592,35 @@ export default function RealEstateDashboard() {
                     <span className="text-lg font-bold text-amber-400">{effectiveDownPct}%</span>
                     <span className="text-xs text-stone-500 tabular-nums">{calcs.price > 0 ? fmtDollar(calcs.downAmt) : "—"}</span>
                     {sliderDownPct !== null && (
-                      <button
-                        onClick={() => setSliderDownPct(null)}
-                        className="text-xs text-stone-500 hover:text-amber-400 border border-stone-600 hover:border-amber-500/50 rounded px-1.5 py-0.5 transition-colors"
-                      >
+                      <button onClick={() => setSliderDownPct(null)} className="text-xs text-stone-500 hover:text-amber-400 border border-stone-600 hover:border-amber-500/50 rounded px-1.5 py-0.5 transition-colors">
                         reset to {baseDownPct}%
                       </button>
                     )}
                   </div>
                 </div>
-
-                <div className="relative">
-                  <input
-                    type="range"
-                    min="5" max="100" step="5"
-                    value={effectiveDownPct}
-                    onChange={e => setSliderDownPct(parseInt(e.target.value))}
-                    className="w-full h-2 rounded-full appearance-none cursor-pointer"
-                    style={{
-                      accentColor: '#f59e0b',
-                      background: `linear-gradient(to right, #f59e0b 0%, #f59e0b ${((effectiveDownPct - 5) / 95) * 100}%, #44403c ${((effectiveDownPct - 5) / 95) * 100}%, #44403c 100%)`
-                    }}
-                  />
-                </div>
-
-                {/* Tick marks — absolutely positioned so each label sits directly under its slider position */}
+                <input
+                  type="range" min="5" max="100" step="5"
+                  value={effectiveDownPct}
+                  onChange={e => setSliderDownPct(parseInt(e.target.value))}
+                  className="w-full h-2 rounded-full appearance-none cursor-pointer"
+                  style={{
+                    accentColor: '#f59e0b',
+                    background: `linear-gradient(to right, #f59e0b 0%, #f59e0b ${((effectiveDownPct - 5) / 95) * 100}%, #44403c ${((effectiveDownPct - 5) / 95) * 100}%, #44403c 100%)`
+                  }}
+                />
                 <div className="relative mt-2 h-5">
-                  {[5, 20, 35, 50, 65, 80, 100].map(v => {
-                    const pct = ((v - 5) / 95) * 100;
-                    return (
-                      <button
-                        key={v}
-                        onClick={() => setSliderDownPct(v)}
-                        className={`absolute text-xs transition-colors -translate-x-1/2 ${effectiveDownPct === v ? "text-amber-400 font-bold" : "text-stone-600 hover:text-stone-400"}`}
-                        style={{ left: `${pct}%` }}
-                      >
-                        {v}%
-                      </button>
-                    );
-                  })}
+                  {[5, 20, 35, 50, 65, 80, 100].map(v => (
+                    <button
+                      key={v}
+                      onClick={() => setSliderDownPct(v)}
+                      className={`absolute text-xs transition-colors -translate-x-1/2 ${effectiveDownPct === v ? "text-amber-400 font-bold" : "text-stone-600 hover:text-stone-400"}`}
+                      style={{ left: `${((v - 5) / 95) * 100}%` }}
+                    >{v}%</button>
+                  ))}
                 </div>
-
                 {effectiveDownPct < 20 && (
-                  <div className="mt-2 flex items-center gap-2 text-xs text-amber-400/90 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2">
-                    <span>⚠</span>
-                    <span>CMHC mortgage insurance required under 20% down</span>
+                  <div className="mt-3 flex items-center gap-2 text-xs text-amber-400/90 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2">
+                    <span>⚠</span><span>CMHC mortgage insurance required under 20% down</span>
                   </div>
                 )}
               </div>
@@ -522,7 +647,6 @@ export default function RealEstateDashboard() {
                 <p className="text-xs text-stone-600 mt-1.5">* Based on month 1. Principal portion grows over time.</p>
               </div>
 
-              {/* Other monthly costs */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
                 {[
                   { label: "Strata Fees", val: calcs.strataFees },
@@ -555,99 +679,33 @@ export default function RealEstateDashboard() {
             {/* Section 3: Property Metrics */}
             <div className="bg-stone-900/80 border border-stone-700/60 rounded-2xl p-5">
               <SectionTitle icon="🔍">Property Metrics</SectionTitle>
-
               {hasMetrics ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Per Sqft */}
                   {calcs.sqft > 0 && (
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-widest text-stone-500 mb-2">Per Square Foot</p>
                       <div className="rounded-xl border border-stone-700/50 overflow-hidden divide-y divide-stone-700/40">
-                        <MetricRow
-                          label="Price / sqft"
-                          value={fmtDollar(calcs.pricePerSqft, 0)}
-                          context={`${fmtDollar(calcs.benchmarkPPSF)} avg`}
-                          status={calcs.priceVsBenchmark === null ? null : calcs.priceVsBenchmark <= -5 ? "good" : calcs.priceVsBenchmark >= 15 ? "bad" : "warn"}
-                        />
-                        {calcs.priceVsBenchmark !== null && (
-                          <MetricRow
-                            label="vs Vancouver avg"
-                            value={`${calcs.priceVsBenchmark > 0 ? "+" : ""}${fmt(calcs.priceVsBenchmark, 1)}%`}
-                            context={prop.propertyType === "condo" ? "condo" : "townhome"}
-                            status={calcs.priceVsBenchmark <= -5 ? "good" : calcs.priceVsBenchmark >= 15 ? "bad" : "warn"}
-                          />
-                        )}
-                        {calcs.strataPerSqft > 0 && (
-                          <MetricRow
-                            label="Strata / sqft"
-                            value={`$${fmt(calcs.strataPerSqft, 2)}`}
-                            context={`$${VANCOUVER_BENCHMARKS.strataPerSqft.toFixed(2)} avg`}
-                            status={calcs.strataPerSqft <= VANCOUVER_BENCHMARKS.strataPerSqft ? "good" : calcs.strataPerSqft > VANCOUVER_BENCHMARKS.strataPerSqft * 1.4 ? "bad" : "warn"}
-                          />
-                        )}
-                        <MetricRow
-                          label="Monthly cost / sqft"
-                          value={`$${fmt(calcs.totalMonthly / calcs.sqft, 2)}`}
-                          context="all-in"
-                        />
-                        {calcs.buildingAge !== null && (
-                          <MetricRow
-                            label="Building age"
-                            value={`${calcs.buildingAge} yrs`}
-                            context={`Built ${prop.yearBuilt}`}
-                            status={calcs.buildingAge <= 10 ? "good" : calcs.buildingAge >= 40 ? "warn" : null}
-                          />
-                        )}
+                        <MetricRow label="Price / sqft" value={fmtDollar(calcs.pricePerSqft, 0)} context={`${fmtDollar(calcs.benchmarkPPSF)} avg`} status={calcs.priceVsBenchmark === null ? null : calcs.priceVsBenchmark <= -5 ? "good" : calcs.priceVsBenchmark >= 15 ? "bad" : "warn"} />
+                        {calcs.priceVsBenchmark !== null && <MetricRow label="vs Vancouver avg" value={`${calcs.priceVsBenchmark > 0 ? "+" : ""}${fmt(calcs.priceVsBenchmark, 1)}%`} context={prop.propertyType === "condo" ? "condo" : "townhome"} status={calcs.priceVsBenchmark <= -5 ? "good" : calcs.priceVsBenchmark >= 15 ? "bad" : "warn"} />}
+                        {calcs.strataPerSqft > 0 && <MetricRow label="Strata / sqft" value={`$${fmt(calcs.strataPerSqft, 2)}`} context={`$${VANCOUVER_BENCHMARKS.strataPerSqft.toFixed(2)} avg`} status={calcs.strataPerSqft <= VANCOUVER_BENCHMARKS.strataPerSqft ? "good" : calcs.strataPerSqft > VANCOUVER_BENCHMARKS.strataPerSqft * 1.4 ? "bad" : "warn"} />}
+                        <MetricRow label="Monthly cost / sqft" value={`$${fmt(calcs.totalMonthly / calcs.sqft, 2)}`} context="all-in" />
+                        {calcs.buildingAge !== null && <MetricRow label="Building age" value={`${calcs.buildingAge} yrs`} context={`Built ${prop.yearBuilt}`} status={calcs.buildingAge <= 10 ? "good" : calcs.buildingAge >= 40 ? "warn" : null} />}
                       </div>
                     </div>
                   )}
-
-                  {/* Investment / Affordability */}
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-widest text-stone-500 mb-2">
-                      {calcs.estimatedRent > 0 ? "Investment Metrics" : "Financing Metrics"}
-                    </p>
+                    <p className="text-xs font-semibold uppercase tracking-widest text-stone-500 mb-2">{calcs.estimatedRent > 0 ? "Investment Metrics" : "Financing Metrics"}</p>
                     <div className="rounded-xl border border-stone-700/50 overflow-hidden divide-y divide-stone-700/40">
-                      <MetricRow
-                        label="LTV Ratio"
-                        value={`${fmt(calcs.effectiveLTV, 1)}%`}
-                        context={calcs.effectiveLTV <= 80 ? "no CMHC" : "CMHC required"}
-                        status={calcs.effectiveLTV <= 80 ? "good" : "warn"}
-                      />
-                      {calcs.price > 0 && (
-                        <MetricRow
-                          label="Non-rec / price"
-                          value={`${fmt((calcs.totalNonRecoverable / calcs.price) * 100, 3)}%`}
-                          context="monthly carry rate"
-                        />
-                      )}
+                      <MetricRow label="LTV Ratio" value={`${fmt(calcs.effectiveLTV, 1)}%`} context={calcs.effectiveLTV <= 80 ? "no CMHC" : "CMHC required"} status={calcs.effectiveLTV <= 80 ? "good" : "warn"} />
+                      {calcs.price > 0 && <MetricRow label="Non-rec / price" value={`${fmt((calcs.totalNonRecoverable / calcs.price) * 100, 3)}%`} context="monthly carry rate" />}
                       {calcs.estimatedRent > 0 ? (
                         <>
-                          <MetricRow
-                            label="Gross Rent Multiplier"
-                            value={`${fmt(calcs.grossRentMultiplier, 1)}×`}
-                            context="lower = better"
-                            status={calcs.grossRentMultiplier < 20 ? "good" : calcs.grossRentMultiplier > 30 ? "bad" : "warn"}
-                          />
-                          <MetricRow
-                            label="Cap Rate"
-                            value={`${fmt(calcs.capRate, 2)}%`}
-                            context={`${VANCOUVER_BENCHMARKS.avgCapRate.toFixed(1)}% avg`}
-                            status={calcs.capRate >= VANCOUVER_BENCHMARKS.avgCapRate ? "good" : calcs.capRate < VANCOUVER_BENCHMARKS.avgCapRate * 0.7 ? "bad" : "warn"}
-                          />
-                          <MetricRow
-                            label="Rent vs non-rec"
-                            value={calcs.rentVsNonRec > 0
-                              ? `${fmtDollar(calcs.rentVsNonRec)} shortfall`
-                              : `${fmtDollar(Math.abs(calcs.rentVsNonRec || 0))} surplus`}
-                            context="/month"
-                            status={calcs.rentVsNonRec !== null ? (calcs.rentVsNonRec <= 0 ? "good" : calcs.rentVsNonRec > 1000 ? "bad" : "warn") : null}
-                          />
+                          <MetricRow label="Gross Rent Multiplier" value={`${fmt(calcs.grossRentMultiplier, 1)}×`} context="lower = better" status={calcs.grossRentMultiplier < 20 ? "good" : calcs.grossRentMultiplier > 30 ? "bad" : "warn"} />
+                          <MetricRow label="Cap Rate" value={`${fmt(calcs.capRate, 2)}%`} context={`${VANCOUVER_BENCHMARKS.avgCapRate.toFixed(1)}% avg`} status={calcs.capRate >= VANCOUVER_BENCHMARKS.avgCapRate ? "good" : calcs.capRate < VANCOUVER_BENCHMARKS.avgCapRate * 0.7 ? "bad" : "warn"} />
+                          <MetricRow label="Rent vs non-rec" value={calcs.rentVsNonRec > 0 ? `${fmtDollar(calcs.rentVsNonRec)} shortfall` : `${fmtDollar(Math.abs(calcs.rentVsNonRec || 0))} surplus`} context="/month" status={calcs.rentVsNonRec !== null ? (calcs.rentVsNonRec <= 0 ? "good" : calcs.rentVsNonRec > 1000 ? "bad" : "warn") : null} />
                         </>
                       ) : (
-                        <div className="px-4 py-3 text-xs text-stone-600 italic">
-                          Add estimated monthly rent to unlock investment metrics
-                        </div>
+                        <div className="px-4 py-3 text-xs text-stone-600 italic">Add estimated monthly rent to unlock investment metrics</div>
                       )}
                     </div>
                   </div>
@@ -655,21 +713,12 @@ export default function RealEstateDashboard() {
               ) : (
                 <div className="rounded-xl border border-dashed border-stone-700/50 p-6 text-center">
                   <p className="text-stone-500 text-sm mb-1">No metrics available yet</p>
-                  <p className="text-xs text-stone-600">
-                    Add <span className="text-amber-500/80">square footage</span> or <span className="text-amber-500/80">estimated rent</span> in the property form to unlock insights.
-                  </p>
+                  <p className="text-xs text-stone-600">Add <span className="text-amber-500/80">square footage</span> or <span className="text-amber-500/80">estimated rent</span> to unlock insights.</p>
                 </div>
               )}
-
               {calcs.price > 0 && (
                 <div className="mt-4 grid grid-cols-3 gap-3">
-                  <StatCard
-                    label="Down Payment"
-                    value={`${calcs.downPct}%`}
-                    sub={fmtDollar(calcs.downAmt)}
-                    good={calcs.downPct >= 20}
-                    warn={calcs.downPct < 20}
-                  />
+                  <StatCard label="Down Payment" value={`${calcs.downPct}%`} sub={fmtDollar(calcs.downAmt)} good={calcs.downPct >= 20} warn={calcs.downPct < 20} />
                   <StatCard label="Loan Amount" value={fmtDollar(calcs.loanAmt)} sub={`${fmt(calcs.effectiveLTV, 1)}% LTV`} />
                   <StatCard label="Non-Rec Annual" value={fmtDollar(calcs.totalNonRecoverable * 12)} sub="true annual cost" accent />
                 </div>
@@ -705,7 +754,7 @@ export default function RealEstateDashboard() {
         </div>
 
         <p className="text-center text-xs text-stone-600 mt-6">
-          For informational purposes only. Consult a mortgage broker and financial advisor. PTT rates current as of 2024. Vancouver benchmarks are approximate market averages.
+          For informational purposes only. Consult a mortgage broker and financial advisor. PTT rates current as of 2024. Vancouver benchmarks are approximate.
         </p>
       </div>
     </div>
