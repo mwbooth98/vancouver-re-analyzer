@@ -62,7 +62,7 @@ const VANCOUVER_BENCHMARKS = {
 // Sample property shown to public visitors so the tool isn't empty
 const SAMPLE_PROPERTY = {
   id: "sample",
-  name: "📍 Sample — Yaletown 1BR",
+  name: "📍 Sample — Kitsilano 1BR Condo",
   listingUrl: "",
   purchasePrice: "749000",
   downPaymentPct: "20",
@@ -415,7 +415,7 @@ export default function RealEstateDashboard() {
                 onClick={switchToPublic}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${!isOwner ? "bg-stone-600 text-stone-100 shadow-md" : "text-stone-400 hover:text-stone-200"}`}
               >
-                🌐 Public View
+                🌐 Guest View
               </button>
             </div>
           </div>
@@ -429,7 +429,7 @@ export default function RealEstateDashboard() {
           </div>
         ) : (
           <div className="mt-3 flex items-center justify-between gap-2 text-xs bg-stone-800/60 border border-stone-700/50 rounded-lg px-3 py-2">
-            <span className="text-stone-400">🌐 Public view — loaded with a sample property. Your changes are yours only and won't affect anyone else.</span>
+            <span className="text-stone-400">🌐 Guest View — loaded with a sample property. Your changes are yours only and won't affect anyone else.</span>
             <button onClick={switchToOwner} className="text-amber-500 hover:text-amber-400 font-semibold whitespace-nowrap transition-colors">Switch to owner →</button>
           </div>
         )}
