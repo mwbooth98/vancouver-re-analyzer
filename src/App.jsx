@@ -37,6 +37,10 @@ function calcPTT(price) {
   return 200000 * 0.01 + 1800000 * 0.02 + 1000000 * 0.03 + (price - 3000000) * 0.05;
 }
 
+function parseNum(val) {
+  return parseFloat(String(val).replace(/,/g, "")) || 0;
+}
+
 function calcMonthlyMortgage(principal, annualRate, years) {
   if (!principal || !annualRate || !years) return { payment: 0, interest: 0, principal: 0 };
   const r = annualRate / 100 / 12;
@@ -110,7 +114,7 @@ const STORAGE_KEY_MODE   = "re_mode_v1"; // "owner" | "public"
 
 // ─── Sub-components ─────────────────────────────────────────────────────────
 
-function InputField({ label, value, onChange, prefix, suffix, type = "number", placeholder, hint }) {
+function InputField({ label, value, onChange, prefix, suffix, type = "number", placeholder, hint, noFormat }) {
   function formatWithCommas(val) {
     const digits = val.replace(/[^0-9.]/g, "");
     const parts = digits.split(".");
@@ -347,7 +351,7 @@ export default function RealEstateDashboard() {
 
   // ── Calculations ──────────────────────────────────────────────────────────
   const calcs = (() => {
-    const price    = parseFloat(prop.purchasePrice) || 0;
+    const price    = parseNum(prop.purchasePrice) || 0;
     const downPct  = effectiveDownPct;
     const downAmt  = price * (downPct / 100);
     const loanAmt  = price - downAmt;
@@ -538,7 +542,7 @@ export default function RealEstateDashboard() {
                     <SelectField label="Property Type" value={prop.propertyType} onChange={v => updateProp("propertyType", v)} options={[{ value: "condo", label: "Condo / Apartment" }, { value: "townhome", label: "Townhome" }]} />
                     <InputField label="Purchase Price" prefix="$" value={prop.purchasePrice} onChange={v => updateProp("purchasePrice", v)} placeholder="800,000" />
                     <InputField label="Square Footage" suffix="sqft" value={prop.squareFootage} onChange={v => updateProp("squareFootage", v)} placeholder="650" />
-                    <InputField label="Year Built" value={prop.yearBuilt} onChange={v => updateProp("yearBuilt", v)} placeholder="2005" />
+                    <InputField label="Year Built" value={prop.yearBuilt} onChange={v => updateProp("yearBuilt", v)} placeholder="2005" noFormat />
                     <InputField label="Down Payment" suffix="%" value={prop.downPaymentPct} onChange={v => updateProp("downPaymentPct", v)} placeholder="20" />
                     <InputField label="Mortgage Interest Rate" suffix="%" value={prop.mortgageRate} onChange={v => updateProp("mortgageRate", v)} placeholder="5.25" />
                     <InputField label="Amortization Period" suffix="yrs" value={prop.amortization} onChange={v => updateProp("amortization", v)} placeholder="25" />
