@@ -722,7 +722,7 @@ export default function RealEstateDashboard() {
                       {calcs.price > 0 && <MetricRow label="Non-rec / price" value={`${fmt((calcs.totalNonRecoverable / calcs.price) * 100, 3)}%`} context="monthly carry rate" />}
                       {calcs.estimatedRent > 0 ? (
                         <>
-                          <MetricRow label="Gross Rent Multiplier" value={`${fmt(calcs.grossRentMultiplier, 1)}×`} context="lower = better" status={calcs.grossRentMultiplier < 20 ? "good" : calcs.grossRentMultiplier > 30 ? "bad" : "warn"} />
+                          <MetricRow label="Gross Rent Multiplier" value={`${fmt(calcs.grossRentMultiplier, 1)}×`} context="Purchase Price / Annual Rent" status={calcs.grossRentMultiplier < 20 ? "good" : calcs.grossRentMultiplier > 30 ? "bad" : "warn"} />
                           <MetricRow label="Cap Rate" value={`${fmt(calcs.capRate, 2)}%`} context={`${VANCOUVER_BENCHMARKS.avgCapRate.toFixed(1)}% avg`} status={calcs.capRate >= VANCOUVER_BENCHMARKS.avgCapRate ? "good" : calcs.capRate < VANCOUVER_BENCHMARKS.avgCapRate * 0.7 ? "bad" : "warn"} />
                           <MetricRow label="Rent vs non-rec" value={calcs.rentVsNonRec > 0 ? `${fmtDollar(calcs.rentVsNonRec)} shortfall` : `${fmtDollar(Math.abs(calcs.rentVsNonRec || 0))} surplus`} context="/month" status={calcs.rentVsNonRec !== null ? (calcs.rentVsNonRec <= 0 ? "good" : calcs.rentVsNonRec > 1000 ? "bad" : "warn") : null} />
                         </>
