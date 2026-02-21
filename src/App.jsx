@@ -68,20 +68,20 @@ const SAMPLE_PROPERTY = {
   id: "sample",
   name: "📍 Sample — Kitsilano 1BR Condo",
   listingUrl: "",
-  purchasePrice: "749000",
+  purchasePrice: "800000",
   downPaymentPct: "20",
   mortgageRate: "5.25",
   amortization: "25",
-  strataFees: "480",
-  annualPropertyTax: "3200",
+  strataFees: "400",
+  annualPropertyTax: "3000",
   annualHomeInsurance: "1500",
   maintenanceReserve: "200",
   legalFees: "2000",
   homeInspection: "600",
   titleInsurance: "300",
-  squareFootage: "620",
+  squareFootage: "800",
   propertyType: "condo",
-  estimatedRent: "2800",
+  estimatedRent: "3200",
   yearBuilt: "2009",
 };
 
@@ -123,13 +123,13 @@ function InputField({ label, value, onChange, prefix, suffix, type = "number", p
   }
 
   function handleChange(raw) {
-    if (type !== "number" || !raw) { onChange(raw); return; }
+    if (type !== "number" || noFormat || !raw) { onChange(raw); return; }
     const formatted = formatWithCommas(raw);
     onChange(formatted);
   }
 
   // Strip commas before displaying so the raw value in state stays clean for parsing
-  const displayValue = type === "number" && value
+  const displayValue = type === "number" && value &&!noFormat
     ? formatWithCommas(String(value))
     : value;
 
