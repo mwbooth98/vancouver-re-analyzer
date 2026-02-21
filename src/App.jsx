@@ -700,7 +700,7 @@ export default function RealEstateDashboard() {
 
             {/* Section 3: Property Metrics */}
             <div className="bg-stone-900/80 border border-stone-700/60 rounded-2xl p-5">
-              <SectionTitle icon="🔍">Property Metrics</SectionTitle>
+              <SectionTitle icon="🔍">Investment and Valuation Metrics</SectionTitle>
               {hasMetrics ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {calcs.sqft > 0 && (
