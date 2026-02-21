@@ -346,7 +346,7 @@ export default function RealEstateDashboard() {
   }
 
   const prop = properties[activeIdx] || properties[0];
-  const baseDownPct = parseFloat(prop.downPaymentPct) || 20;
+  const baseDownPct = parseNum(prop.downPaymentPct) || 20;
   const effectiveDownPct = sliderDownPct !== null ? sliderDownPct : baseDownPct;
 
   // ── Calculations ──────────────────────────────────────────────────────────
@@ -355,34 +355,34 @@ export default function RealEstateDashboard() {
     const downPct  = effectiveDownPct;
     const downAmt  = price * (downPct / 100);
     const loanAmt  = price - downAmt;
-    const rate     = parseFloat(prop.mortgageRate) || 0;
+    const rate     = parseNum(prop.mortgageRate) || 0;
     const amort    = parseInt(prop.amortization) || 25;
-    const sqft     = parseFloat(prop.squareFootage) || 0;
+    const sqft     = parseNum(prop.squareFootage) || 0;
 
     const ptt      = calcPTT(price);
-    const legalFees = parseFloat(prop.legalFees) || 0;
-    const inspection = parseFloat(prop.homeInspection) || 0;
-    const titleIns  = parseFloat(prop.titleInsurance) || 0;
+    const legalFees = parseNum(prop.legalFees) || 0;
+    const inspection = parseNum(prop.homeInspection) || 0;
+    const titleIns  = parseNum(prop.titleInsurance) || 0;
     const totalUpfront = ptt + legalFees + inspection + titleIns + downAmt;
     const totalUpfrontExcludingDown = ptt + legalFees + inspection + titleIns;
 
     const { payment: mortgagePayment, interest: mortgageInterest, principal: mortgagePrincipal } =
       calcMonthlyMortgage(loanAmt, rate, amort);
 
-    const strataFees   = parseFloat(prop.strataFees) || 0;
-    const propTax      = (parseFloat(prop.annualPropertyTax) || 0) / 12;
-    const insurance    = (parseFloat(prop.annualHomeInsurance) || 0) / 12;
-    const maintenance  = parseFloat(prop.maintenanceReserve) || 0;
+    const strataFees   = parseNum(prop.strataFees) || 0;
+    const propTax      = (parseNum(prop.annualPropertyTax) || 0) / 12;
+    const insurance    = (parseNum(prop.annualHomeInsurance) || 0) / 12;
+    const maintenance  = parseNum(prop.maintenanceReserve) || 0;
 
     const totalMonthly        = mortgagePayment + strataFees + propTax + insurance + maintenance;
     const totalNonRecoverable = mortgageInterest + strataFees + propTax + insurance + maintenance;
 
     const pricePerSqft  = sqft > 0 ? price / sqft : 0;
     const strataPerSqft = sqft > 0 && strataFees > 0 ? strataFees / sqft : 0;
-    const estimatedRent = parseFloat(prop.estimatedRent) || 0;
+    const estimatedRent = parseNum(prop.estimatedRent) || 0;
     const grossRentMultiplier = estimatedRent > 0 ? price / (estimatedRent * 12) : 0;
     const annualNOI = estimatedRent > 0
-      ? (estimatedRent * 12) - (strataFees * 12) - (parseFloat(prop.annualPropertyTax) || 0) - (parseFloat(prop.annualHomeInsurance) || 0) - (maintenance * 12)
+      ? (estimatedRent * 12) - (strataFees * 12) - (parseNum(prop.annualPropertyTax) || 0) - (parseNum(prop.annualHomeInsurance) || 0) - (maintenance * 12)
       : 0;
     const capRate      = price > 0 && annualNOI > 0 ? (annualNOI / price) * 100 : 0;
     const rentVsNonRec = estimatedRent > 0 ? totalNonRecoverable - estimatedRent : null;
